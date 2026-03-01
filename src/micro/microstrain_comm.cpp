@@ -92,7 +92,7 @@ static void sig_action(int signal, siginfo_t* s, void* user)
     if (mainloop && g_main_loop_is_running(mainloop)) {
         g_main_loop_quit(mainloop);
     }
-    // rclcpp::shutdown();
+    rclcpp::shutdown();
 }
 
 /**
@@ -111,8 +111,6 @@ void install_signal_handler()
     sigaction(SIGKILL, &action, NULL);
     sigaction(SIGHUP, &action, NULL);
 }
-
-// ... [Keep scandev(), setup_com_port(), open_com_port(), cksum(), set_continuous_mode(), stop_continuous_mode(), soft_reset(), set_comms_baud_rate(), set_sampling_settings() exactly the same] ...
 
 /**
  * This function scans for active serial ports, that could have the microstrain device on it
