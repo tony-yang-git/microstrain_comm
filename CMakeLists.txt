@@ -1,34 +1,27 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.8)
 project(microstrain_comm)
 
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  sensor_msgs
-)
+# Default to C++14
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 14)
+endif()
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
 
 find_package(GLIB2 REQUIRED)
-find_Package(GTHREAD2 REQUIRED)
+find_package(GTHREAD2 REQUIRED)
 
-catkin_package(
-  CATKIN_DEPENDS
-    roscpp
-    sensor_msgs
-)
-
-
-# Our includes
 include_directories(
   include
-  ${catkin_INCLUDE_DIRS}
   ${GLIB2_MAIN_INCLUDE_DIR}
   ${GLIB2_INTERNAL_INCLUDE_DIR}
   ${GTHREAD2_MAIN_INCLUDE_DIR}
-  ${PROJECT_SOURCE_DIR}
 )
 
-# Files that we need to build
 add_executable(${PROJECT_NAME}_node
   src/micro/microstrain_comm.cpp
   src/libbot/ringbuf.c
@@ -37,9 +30,23 @@ add_executable(${PROJECT_NAME}_node
   src/libbot/timestamp.c
 )
 
-# What libraries we need
+ament_target_dependencies(${PROJECT_NAME}_node
+  rclcpp
+  sensor_msgs
+)
+
 target_link_libraries(${PROJECT_NAME}_node
-  ${catkin_LIBRARIES}
   ${GLIB2_LIBRARY}
   ${GTHREAD2_LIBRARY}
 )
+
+# Install rules
+install(TARGETS ${PROJECT_NAME}_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()

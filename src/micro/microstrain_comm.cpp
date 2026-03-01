@@ -12,8 +12,8 @@
 #include <stdlib.h>
 #include <math.h>
 
-#include <ros/ros.h>
-#include "sensor_msgs/Imu.h"
+#include <rclcpp/rclcpp.hpp>
+#include "sensor_msgs/msg/imu.hpp"
 
 #include <glib.h>
 #include <gio/gio.h>
@@ -31,8 +31,9 @@ using namespace std;
 // Global reference to Glib main loop
 static GMainLoop* mainloop = NULL;
 
-// Global ROS publisher
-ros::Publisher imu_data_pub_;
+// Global ROS Publisher and Node
+rclcpp::Node::SharedPtr node;
+rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_data_pub_;
 
 // Core app self structure
 class app_t
@@ -75,7 +76,7 @@ public:
     string channel;
 
     // Our imu message
-    sensor_msgs::Imu reading;
+    sensor_msgs::msg::Imu reading;
 
     // Libbot time sync (currently not used)
     bot_timestamp_sync_state* sync;
@@ -88,9 +89,10 @@ public:
 static void sig_action(int signal, siginfo_t* s, void* user)
 {
     // kill the glib main loop...
-    if (g_main_loop_is_running(mainloop)) {
+    if (mainloop && g_main_loop_is_running(mainloop)) {
         g_main_loop_quit(mainloop);
     }
+    // rclcpp::shutdown();
 }
 
 /**
@@ -109,6 +111,8 @@ void install_signal_handler()
     sigaction(SIGKILL, &action, NULL);
     sigaction(SIGHUP, &action, NULL);
 }
+
+// ... [Keep scandev(), setup_com_port(), open_com_port(), cksum(), set_continuous_mode(), stop_continuous_mode(), soft_reset(), set_comms_baud_rate(), set_sampling_settings() exactly the same] ...
 
 /**
  * This function scans for active serial ports, that could have the microstrain device on it
@@ -264,7 +268,7 @@ unsigned short cksum(const Byte* packet_bytes, int packet_length)
  */
 bool set_continuous_mode(app_t* app)
 {
-    char set_mode_string[] = {
+    unsigned char set_mode_string[] = {
         0xC4,
         0xC1,
         0x29,
@@ -288,7 +292,7 @@ bool set_continuous_mode(app_t* app)
  */
 void stop_continuous_mode(app_t* app)
 {
-    char stop_mode_string[] = {
+    unsigned char stop_mode_string[] = {
         0xFA,
         0x75,
         0xB4
@@ -307,7 +311,7 @@ void stop_continuous_mode(app_t* app)
  */
 void soft_reset(app_t* app)
 {
-    char soft_reset_string[] = {
+    unsigned char soft_reset_string[] = {
         0xFE,
         0x9E,
         0x3A
@@ -330,7 +334,7 @@ bool set_comms_baud_rate(app_t* app)
     // Convert our int baud rate, into 4 seperate bytes
     makeUnsignedInt32(app->baud_rate, &baud3, &baud2, &baud1, &baud0);
 
-    char set_comms_baud_rate_string[] = {
+    unsigned char set_comms_baud_rate_string[] = {
         COMMS_SETTINGS_COMMAND, // Byte  1  : command
         0xC3, // Bytes 2-3: confirm intent
         0x55,
@@ -376,7 +380,7 @@ bool set_sampling_settings(app_t* app)
 
     wndb = static_cast<Byte>(app->filter_window_size);
 
-    char set_sampling_params_string[] = {
+    unsigned char set_sampling_params_string[] = {
         SAMPLING_SETTINGS_COMMAND, // Byte  1    : command
         0xA8,                      // Bytes 2-3  : confirm intent
         0xB9,
@@ -414,7 +418,6 @@ bool set_sampling_settings(app_t* app)
  */
 bool handle_message(app_t* app)
 {
-
     // Our core timer, and sync time
     int ins_timer;
     int64_t utime = bot_timestamp_now();
@@ -467,9 +470,6 @@ bool handle_message(app_t* app)
 
         // Get our orientation matrix, and convert it to quat
         unpack32BitFloats(vals, &app->input_buffer[37], 9, app->little_endian);
-        // This libbot2 function is faulty:
-        // bot_matrix_to_quat(rot, ins_message.quat);
-        // Workaround (from mfallon, oct2011)
         float ms_rpy[] = { 0, 0, 0 };
         float q[] = { 0, 0, 0, 0 };
         ms_rpy[0] = atan2(vals[5], vals[8]); // roll
@@ -484,10 +484,10 @@ bool handle_message(app_t* app)
         app->reading.orientation.w = q[3];
 
         // Append current ros timestamp
-        app->reading.header.stamp = ros::Time::now();
+        app->reading.header.stamp = node->now();
 
         // Publish to our topic
-        imu_data_pub_.publish(app->reading);
+        imu_data_pub_->publish(app->reading);
 
         break;
     }
@@ -511,7 +511,6 @@ bool handle_message(app_t* app)
         if (app->verbose)
             fprintf(stderr, "Recieved comms baud rate command echo\n");
 
-        // received echo at the current baud rate, now switch to desired baud rate
         if (setup_com_port(app->comm, app->baud_rate) < 0) {
             success = false;
         } else {
@@ -613,9 +612,8 @@ void unpack_packets(app_t* app)
   */
 static gboolean serial_read_handler(GIOChannel* source, GIOCondition condition, void* user)
 {
-
     // Check to see if the user has requested a stop
-    if (!ros::ok()) {
+    if (!rclcpp::ok()) {
         g_main_loop_quit(mainloop);
         return true;
     }
@@ -667,12 +665,11 @@ int main(int argc, char** argv)
     app_t* app = new app_t();
     app->little_endian = systemLittleEndianCheck();
 
-    ros::init(argc, argv, "microstrain_comm");
-    ros::NodeHandle nh("~");
+    rclcpp::init(argc, argv);
+    node = std::make_shared<rclcpp::Node>("microstrain_comm_node");
 
     // Our publisher
-    ros::NodeHandle imu_node_handle("imu");
-    imu_data_pub_ = imu_node_handle.advertise<sensor_msgs::Imu>("data", 100);
+    imu_data_pub_ = node->create_publisher<sensor_msgs::msg::Imu>("imu/data", 100);
 
     // Defualt message mode
     app->message_mode = ACCEL_ANGRATE_ORIENT;
@@ -685,16 +682,26 @@ int main(int argc, char** argv)
     bool acc_ang_mag;
     bool acc_stab;
 
-    // Get our params from the config file, or command line
-    nh.param("verbose", app->verbose, false);
-    nh.param("quiet", app->quiet, false);
-    nh.param("com_port", user_comm_port_name, string(""));
-    nh.param("rate", data_rate, string("low"));
-    nh.param("window", app->filter_window_size, FILTER_WINDOW_SIZE_DEFAULT);
-    nh.param("quat", acc_ang_mag_rot, false);
-    nh.param("no_delta", acc_ang_mag, false);
-    nh.param("filter", acc_stab, false);
-    nh.param("time_sync", app->do_sync, true);
+    // Declare and get our params
+    node->declare_parameter("verbose", false);
+    node->declare_parameter("quiet", false);
+    node->declare_parameter("com_port", string(""));
+    node->declare_parameter("rate", string("low"));
+    node->declare_parameter("window", FILTER_WINDOW_SIZE_DEFAULT);
+    node->declare_parameter("quat", false);
+    node->declare_parameter("no_delta", false);
+    node->declare_parameter("filter", false);
+    node->declare_parameter("time_sync", true);
+
+    app->verbose = node->get_parameter("verbose").as_bool();
+    app->quiet = node->get_parameter("quiet").as_bool();
+    user_comm_port_name = node->get_parameter("com_port").as_string();
+    data_rate = node->get_parameter("rate").as_string();
+    app->filter_window_size = node->get_parameter("window").as_int();
+    acc_ang_mag_rot = node->get_parameter("quat").as_bool();
+    acc_ang_mag = node->get_parameter("no_delta").as_bool();
+    acc_stab = node->get_parameter("filter").as_bool();
+    app->do_sync = node->get_parameter("time_sync").as_bool();
 
     // Data rate (which also determines baud rate)
     if (data_rate == "low") {
@@ -790,6 +797,8 @@ int main(int argc, char** argv)
     // Create a glib channel and main thread
     GIOChannel* ioc = g_io_channel_unix_new(app->comm);
     g_io_add_watch_full(ioc, G_PRIORITY_HIGH, G_IO_IN, (GIOFunc)serial_read_handler, (void*)app, NULL);
+    
+    // Run GLIB event loop until shutdown
     g_main_loop_run(mainloop);
 
     // Received signal - soft reset to cleanup before quitting
@@ -797,5 +806,11 @@ int main(int argc, char** argv)
 
     // Close our imu port
     close(app->comm);
+    
+    // Destroy the global ROS 2 objects BEFORE shutting down rclcpp
+    imu_data_pub_.reset();
+    node.reset();
+    
+    rclcpp::shutdown();
     return 0;
 }
