@@ -462,7 +462,7 @@ bool handle_message(app_t* app)
         unpack32BitFloats(vals, &app->input_buffer[13], 3, app->little_endian);
         app->reading.angular_velocity.x = vals[0];
         app->reading.angular_velocity.y = vals[1];
-        app->reading.angular_velocity.z = vals[2];
+        app->reading.angular_velocity.z = - vals[2];
 
         // Skip out magnetometer readings, we don't have a way to edmit those
 
